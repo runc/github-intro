@@ -8,6 +8,7 @@ build/
 # 过程/实验性目录(非源码)
 motion-anything/
 FableCut/
+screengo/
 
 # OS & editor
 .DS_Store
