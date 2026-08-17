@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# 过程/实验性目录(非源码)
+motion-anything/
+FableCut/
+
+# OS & editor
+.DS_Store
+*.local
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env
+.env
+.env.*
