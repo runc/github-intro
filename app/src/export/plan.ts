@@ -43,6 +43,28 @@ export function frameCount(total: number, fps: number): number {
   return Math.max(1, Math.round(total * fps));
 }
 
+/** 源画幅 contain 进目标画布(居中,整数像素) */
+export function containDest(
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+): { dx: number; dy: number; dw: number; dh: number } {
+  if (srcW <= 0 || srcH <= 0) return { dx: 0, dy: 0, dw: dstW, dh: dstH };
+  const s = Math.min(dstW / srcW, dstH / srcH);
+  const dw = Math.max(1, Math.round(srcW * s));
+  const dh = Math.max(1, Math.round(srcH * s));
+  return { dx: Math.round((dstW - dw) / 2), dy: Math.round((dstH - dh) / 2), dw, dh };
+}
+
+/** 采集帧是否已裁到目标画幅(未裁切的标签页往往是横屏窗口) */
+export function aspectClose(srcW: number, srcH: number, dstW: number, dstH: number, relTol = 0.12): boolean {
+  if (srcW < 2 || srcH < 2 || dstW < 2 || dstH < 2) return false;
+  const src = srcW / srcH;
+  const dst = dstW / dstH;
+  return Math.abs(src - dst) <= relTol * dst;
+}
+
 export interface AudioSegmentSpec {
   /** 主时间线上的触发时刻(秒) */
   start: number;

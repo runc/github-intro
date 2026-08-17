@@ -9,16 +9,22 @@ interface StageViewportProps {
   h: number;
   /** 铺满视口、无边距(纯净模式 / 浏览器全屏) */
   fill?: boolean;
+  /** 导出:取消 CSS scale,舞台按设计像素排版,供 Element Capture 拿到满分辨率层 */
+  nativePixels?: boolean;
   children: ReactNode;
 }
 
-export function StageViewport({ w, h, fill = false, children }: StageViewportProps) {
+export function StageViewport({ w, h, fill = false, nativePixels = false, children }: StageViewportProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.25);
 
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
+    if (nativePixels) {
+      setScale(1);
+      return;
+    }
     const update = () => {
       const pad = fill ? 0 : 32;
       const s = Math.max(0.05, Math.min((el.clientWidth - pad) / w, (el.clientHeight - pad) / h));
@@ -28,13 +34,16 @@ export function StageViewport({ w, h, fill = false, children }: StageViewportPro
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [w, h, fill]);
+  }, [w, h, fill, nativePixels]);
 
   return (
-    <div ref={viewportRef} className={`stage-viewport${fill ? ' fill' : ''}`}>
+    <div
+      ref={viewportRef}
+      className={`stage-viewport${fill ? ' fill' : ''}${nativePixels ? ' native-pixels' : ''}`}
+    >
       <div
         className="stage-scaler"
-        style={{ width: w, height: h, transform: `scale(${scale})` }}
+        style={{ width: w, height: h, transform: nativePixels ? 'none' : `scale(${scale})` }}
       >
         {children}
       </div>

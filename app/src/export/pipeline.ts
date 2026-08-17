@@ -71,6 +71,28 @@ export function collectTrackSpecs(player: Player, doc: VDocument): MixTrackSpec[
   return specs;
 }
 
+export async function mixDocumentAudio(
+  player: Player,
+  doc: VDocument,
+  includeAudio: boolean,
+  onProgress?: (p: ExportProgress) => void,
+): Promise<AudioBuffer | null> {
+  const total = player.total();
+  const specs = collectTrackSpecs(player, doc);
+  if (!includeAudio || specs.length === 0 || !(await aacEncodeSupported())) return null;
+  onProgress?.({ phase: 'audio', percent: 0, detail: '解码音效…' });
+  const segments: { seg: AudioSegment; buffer: AudioBuffer }[] = [];
+  for (const spec of specs) {
+    const buffer = await decodeAsset(spec.asset);
+    if (!buffer) continue;
+    const seg = planSegmentFor(spec, buffer.duration, total);
+    if (seg) segments.push({ seg, buffer });
+  }
+  if (segments.length === 0) return null;
+  onProgress?.({ phase: 'audio', percent: 0.6, detail: '离线混音…' });
+  return renderMix(segments, total);
+}
+
 export async function exportMp4(opts: ExportOptions): Promise<Blob> {
   const { player, stage, doc, brand, fps, scale, includeAudio } = opts;
   const total = player.total();
@@ -96,23 +118,7 @@ export async function exportMp4(opts: ExportOptions): Promise<Blob> {
     const codec = await pickVideoCodec(W, H, fps, bitrate);
     if (!codec) throw new Error('该设备无法编码 H.264(尝试降低分辨率或帧率)');
 
-    // 离线混音(无音轨 / 不支持 AAC 时静默跳过,导出无声视频)
-    let mixBuffer: AudioBuffer | null = null;
-    const specs = collectTrackSpecs(player, doc);
-    if (includeAudio && specs.length > 0 && (await aacEncodeSupported())) {
-      report({ phase: 'audio', percent: 0, detail: '解码音效…' });
-      const segments: { seg: AudioSegment; buffer: AudioBuffer }[] = [];
-      for (const spec of specs) {
-        const buffer = await decodeAsset(spec.asset);
-        if (!buffer) continue;
-        const seg = planSegmentFor(spec, buffer.duration, total);
-        if (seg) segments.push({ seg, buffer });
-      }
-      if (segments.length > 0) {
-        report({ phase: 'audio', percent: 0.6, detail: '离线混音…' });
-        mixBuffer = await renderMix(segments, total);
-      }
-    }
+    const mixBuffer = await mixDocumentAudio(player, doc, includeAudio, report);
 
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),

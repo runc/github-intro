@@ -81,7 +81,7 @@ export function TopBar({
       <button className="mini-btn" title="纯净全屏播放 (F)" onClick={() => togglePresent()}>
         全屏
       </button>
-      <button className="mini-btn" title="浏览器内导出 MP4(视频+音频)" onClick={onExportVideo}>
+      <button className="mini-btn" title="导出 MP4:默认高清录制舞台,亦可草稿逐帧" onClick={onExportVideo}>
         导出视频
       </button>
       <button className="mini-btn" onClick={doExport}>

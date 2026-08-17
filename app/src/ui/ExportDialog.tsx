@@ -1,12 +1,13 @@
 /**
- * 导出对话框:MP4(H.264 + AAC)全浏览器内导出。
- * 逐帧确定性编码无需保持实时,进度条期间可离开标签页;取消经 ExportHandle 协作中断。
+ * 导出对话框:默认高清(标签页合成器录制)+ 保留 FO 草稿逐帧编码。
  */
 import { useEffect, useRef, useState } from 'react';
 import type { Player } from '../engine/timeline/player';
 import type { BrandKit, VDocument } from '../types';
 import { ASPECT_PIXELS } from '../types';
 import { exportMp4, ExportCancelled, collectTrackSpecs, type ExportHandle, type ExportProgress } from '../export/pipeline';
+import { exportLiveMp4 } from '../export/live';
+import { liveCaptureAvailable, requestTabCapture, stopStream, waitStageLaidOut } from '../export/capture';
 import { exportSize, frameCount } from '../export/plan';
 import { aacEncodeSupported, webCodecsAvailable } from '../export/support';
 
@@ -23,15 +24,37 @@ interface ExportDialogProps {
   brand: BrandKit;
   projectName: string;
   onClose: () => void;
+  /** 同步:铺满舞台 + 申请全屏(须在用户点击的同一轮里启动) */
+  onLivePrepare: () => Promise<void> | void;
+  /** Element Capture 拿不到竖屏帧时,改回窗口 contain 再用 Region Capture */
+  onLiveContainLayout: () => Promise<void> | void;
+  onLiveRestore: () => Promise<void> | void;
 }
+
+type ExportMode = 'live' | 'fo';
 
 type RunState =
   | { kind: 'idle' }
-  | { kind: 'running'; progress: ExportProgress }
+  | { kind: 'running'; progress: ExportProgress; live: boolean }
   | { kind: 'done'; url: string; bytes: number }
   | { kind: 'error'; message: string };
 
-export function ExportDialog({ player, doc, brand, projectName, onClose }: ExportDialogProps) {
+function downloadName(projectName: string, docName: string): string {
+  return `${projectName}-${docName}.mp4`.replace(/[/\\:*?"<>|]/g, '_');
+}
+
+export function ExportDialog({
+  player,
+  doc,
+  brand,
+  projectName,
+  onClose,
+  onLivePrepare,
+  onLiveContainLayout,
+  onLiveRestore,
+}: ExportDialogProps) {
+  const liveOk = liveCaptureAvailable();
+  const [mode, setMode] = useState<ExportMode>(liveOk ? 'live' : 'fo');
   const [fps, setFps] = useState(30);
   const [scale, setScale] = useState(1);
   const [includeAudio, setIncludeAudio] = useState(true);
@@ -52,6 +75,70 @@ export function ExportDialog({ player, doc, brand, projectName, onClose }: Expor
   const frames = frameCount(total, fps);
   const hasAudio = collectTrackSpecs(player, doc).length > 0;
   const running = run.kind === 'running';
+  const liveRunning = run.kind === 'running' && run.live;
+
+  const finishBlob = (blob: Blob) => {
+    if (doneUrlRef.current) URL.revokeObjectURL(doneUrlRef.current);
+    const url = URL.createObjectURL(blob);
+    doneUrlRef.current = url;
+    setRun({ kind: 'done', url, bytes: blob.size });
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = downloadName(projectName, doc.name);
+    a.click();
+  };
+
+  const startFo = async (stage: HTMLElement, handle: ExportHandle) => {
+    const blob = await exportMp4({
+      player,
+      stage,
+      doc,
+      brand,
+      fps,
+      scale,
+      includeAudio,
+      handle,
+      onProgress: (p) => setRun({ kind: 'running', progress: p, live: false }),
+    });
+    finishBlob(blob);
+  };
+
+  const startLive = async (stage: HTMLElement, handle: ExportHandle) => {
+    const fsP = Promise.resolve(onLivePrepare());
+    const streamP = requestTabCapture(fps);
+    let stream: MediaStream | undefined;
+    try {
+      stream = await streamP;
+    } catch (e) {
+      await fsP;
+      await onLiveRestore();
+      if (e instanceof DOMException && e.name === 'NotAllowedError') throw new ExportCancelled();
+      throw e;
+    }
+    try {
+      await fsP;
+      await waitStageLaidOut(stage, 1200, () => handle.cancelled);
+      if (handle.cancelled) throw new ExportCancelled();
+      const liveStage = document.getElementById('stage') ?? stage;
+      const blob = await exportLiveMp4({
+        stream,
+        player,
+        stage: liveStage,
+        doc,
+        brand,
+        fps,
+        scale,
+        includeAudio,
+        handle,
+        onContainLayout: onLiveContainLayout,
+        onProgress: (p) => setRun({ kind: 'running', progress: p, live: true }),
+      });
+      finishBlob(blob);
+    } finally {
+      stopStream(stream);
+      await onLiveRestore();
+    }
+  };
 
   const start = async () => {
     const stage = document.getElementById('stage');
@@ -61,27 +148,11 @@ export function ExportDialog({ player, doc, brand, projectName, onClose }: Expor
     }
     const handle: ExportHandle = { cancelled: false };
     handleRef.current = handle;
-    setRun({ kind: 'running', progress: { phase: 'prepare', percent: 0 } });
+    const live = mode === 'live';
+    setRun({ kind: 'running', progress: { phase: 'prepare', percent: 0 }, live });
     try {
-      const blob = await exportMp4({
-        player,
-        stage,
-        doc,
-        brand,
-        fps,
-        scale,
-        includeAudio,
-        handle,
-        onProgress: (p) => setRun({ kind: 'running', progress: p }),
-      });
-      if (doneUrlRef.current) URL.revokeObjectURL(doneUrlRef.current);
-      const url = URL.createObjectURL(blob);
-      doneUrlRef.current = url;
-      setRun({ kind: 'done', url, bytes: blob.size });
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${projectName}-${doc.name}.mp4`.replace(/[/\\:*?"<>|]/g, '_');
-      a.click();
+      if (live) await startLive(stage, handle);
+      else await startFo(stage, handle);
     } catch (e) {
       if (e instanceof ExportCancelled) setRun({ kind: 'idle' });
       else setRun({ kind: 'error', message: e instanceof Error ? e.message : String(e) });
@@ -92,6 +163,7 @@ export function ExportDialog({ player, doc, brand, projectName, onClose }: Expor
 
   const cancel = () => {
     if (handleRef.current) handleRef.current.cancelled = true;
+    window.dispatchEvent(new Event('vk-export-cancel'));
   };
 
   const progress = run.kind === 'running' ? run.progress : null;
@@ -99,14 +171,26 @@ export function ExportDialog({ player, doc, brand, projectName, onClose }: Expor
 
   return (
     <div
-      className="export-overlay"
+      className={`export-overlay${liveRunning ? ' live-hidden' : ''}`}
       onClick={(e) => e.target === e.currentTarget && !running && onClose()}
       onKeyDown={(e) => {
-        // 阻断编辑器快捷键(useHotkeys 挂在 window,此处冒泡拦截);Esc 关闭
-        e.stopPropagation();
-        if (e.key === 'Escape' && !running) onClose();
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        if (running) cancel();
+        else onClose();
       }}
     >
+      {liveRunning && progress && (
+        <div className="export-live-hud" role="status" tabIndex={-1}>
+          录制中 {PHASE_LABEL[progress.phase]}
+          {progress.detail ? ` · ${progress.detail}` : ''} {percentText}
+          <span>勿切换标签页 · Esc 取消</span>
+          <button type="button" className="mini-btn" onClick={cancel}>
+            取消
+          </button>
+        </div>
+      )}
+
       <div className="export-panel">
         <div className="export-head">
           <span>导出视频 · {doc.name}</span>
@@ -127,6 +211,22 @@ export function ExportDialog({ player, doc, brand, projectName, onClose }: Expor
 
         {!running && (
           <div className="export-form">
+            <label className="export-field">
+              方式
+              <select
+                className="field-input"
+                value={mode}
+                onChange={(e) => setMode(e.target.value as ExportMode)}
+              >
+                <option value="live" disabled={!liveOk}>
+                  高清(合成器录制)
+                </option>
+                <option value="fo">草稿(逐帧栅格,可切后台)</option>
+              </select>
+            </label>
+            {!liveOk && (
+              <p className="export-warn">当前浏览器不支持标签页区域采集,仅能使用草稿导出。请改用较新的 Chrome / Edge。</p>
+            )}
             <label className="export-field">
               帧率
               <select className="field-input" value={fps} onChange={(e) => setFps(Number(e.target.value))}>
@@ -159,13 +259,19 @@ export function ExportDialog({ player, doc, brand, projectName, onClose }: Expor
                 <option value="off">仅视频</option>
               </select>
             </label>
-            <p className="export-note">
-              时长 {total.toFixed(1)}s · {frames} 帧 · {px.w}×{px.h} 输出。画面 2× 超采样后再编码,文字更锐利。期间可切换标签页。
-            </p>
+            {mode === 'live' ? (
+              <p className="export-note">
+                时长 {total.toFixed(1)}s · 将按设计稿像素采集舞台,请分享「当前标签页」。竖屏在横屏显示器上若只能录到窗口里的缩小画面,放大到 1080p 不会更清晰。期间勿切换,约实时 {total.toFixed(1)}s。
+              </p>
+            ) : (
+              <p className="export-note">
+                时长 {total.toFixed(1)}s · {frames} 帧 · {px.w}×{px.h}。逐帧栅格文字偏软,可切换标签页。
+              </p>
+            )}
           </div>
         )}
 
-        {progress && (
+        {progress && !liveRunning && (
           <div className="export-progress-wrap">
             <div className="export-progress-label">
               {PHASE_LABEL[progress.phase]}
@@ -185,7 +291,7 @@ export function ExportDialog({ player, doc, brand, projectName, onClose }: Expor
               onClick={() => {
                 const a = document.createElement('a');
                 a.href = run.url;
-                a.download = `${projectName}-${doc.name}.mp4`.replace(/[/\\:*?"<>|]/g, '_');
+                a.download = downloadName(projectName, doc.name);
                 a.click();
               }}
             >
@@ -196,14 +302,16 @@ export function ExportDialog({ player, doc, brand, projectName, onClose }: Expor
         {run.kind === 'error' && <p className="export-warn">导出失败:{run.message}</p>}
 
         <div className="export-actions">
-          {running ? (
+          {running && !liveRunning ? (
             <button className="mini-btn" onClick={cancel}>
               取消导出
             </button>
           ) : (
-            <button className="mini-btn export-primary" onClick={() => void start()} disabled={!support?.codecs || total <= 0}>
-              {run.kind === 'done' ? '再次导出' : '开始导出'}
-            </button>
+            !liveRunning && (
+              <button className="mini-btn export-primary" onClick={() => void start()} disabled={!support?.codecs || total <= 0}>
+                {run.kind === 'done' ? '再次导出' : mode === 'live' ? '开始高清导出' : '开始草稿导出'}
+              </button>
+            )
           )}
         </div>
       </div>

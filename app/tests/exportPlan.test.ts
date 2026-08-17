@@ -1,5 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { autoBitrate, captureSize, exportSize, frameCount, planAudioSegment } from '../src/export/plan';
+import { aspectClose, autoBitrate, captureSize, containDest, exportSize, frameCount, planAudioSegment } from '../src/export/plan';
+
+describe('containDest(居中 contain)', () => {
+  it('同源尺寸铺满', () => {
+    expect(containDest(1920, 1080, 1920, 1080)).toEqual({ dx: 0, dy: 0, dw: 1920, dh: 1080 });
+  });
+  it('横源进竖画布左右留边', () => {
+    const box = containDest(1920, 1080, 1080, 1920);
+    expect(box.dw).toBe(1080);
+    expect(box.dh).toBe(608);
+    expect(box.dx).toBe(0);
+    expect(box.dy).toBeGreaterThan(0);
+  });
+  it('竖源进横画布上下留边', () => {
+    const box = containDest(1080, 1920, 1920, 1080);
+    expect(box.dh).toBe(1080);
+    expect(box.dw).toBe(608);
+    expect(box.dy).toBe(0);
+    expect(box.dx).toBeGreaterThan(0);
+  });
+});
+
+describe('aspectClose(采集画幅是否已裁到目标)', () => {
+  it('竖屏目标拒绝未裁切的横屏标签页', () => {
+    expect(aspectClose(1920, 1080, 1080, 1920)).toBe(false);
+  });
+  it('竖屏目标接受竖屏采集(含 DPR 超采样)', () => {
+    expect(aspectClose(1080, 1920, 1080, 1920)).toBe(true);
+    expect(aspectClose(2160, 3840, 1080, 1920)).toBe(true);
+  });
+  it('竖屏目标接受窗口里缩小后的竖屏舞台', () => {
+    expect(aspectClose(608, 1080, 1080, 1920)).toBe(true);
+  });
+});
 
 describe('exportSize(H.264 偶数尺寸)', () => {
   it('原生画幅保持不变', () => {

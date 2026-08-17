@@ -27,6 +27,13 @@ export function useHotkeys(player: Player | null): void {
       }
 
       const store = useStore.getState();
+      if (store.exportLock) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          window.dispatchEvent(new Event('vk-export-cancel'));
+        }
+        return;
+      }
       switch (e.key) {
         case ' ':
           e.preventDefault();

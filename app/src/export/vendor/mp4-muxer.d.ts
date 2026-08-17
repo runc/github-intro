@@ -12,6 +12,8 @@ export interface Mp4MuxerOptions {
   video?: { codec: 'avc' | 'hevc' | 'vp9' | 'av1'; width: number; height: number; frameRate?: number };
   audio?: { codec: 'aac' | 'opus'; numberOfChannels: number; sampleRate: number };
   fastStart?: false | 'in-memory' | 'fragmented' | 'per-frame';
+  /** 采集轨首包时间戳常不是 0;offset = 整轨平移使第一包为 0 */
+  firstTimestampBehavior?: 'strict' | 'offset' | 'cross-track-offset';
 }
 
 export declare class Muxer {

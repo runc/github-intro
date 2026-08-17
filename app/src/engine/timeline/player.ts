@@ -110,6 +110,10 @@ export class Player {
     for (const tr of this.audio) tr.el.playbackRate = scale;
   }
 
+  speed(): number {
+    return this.master.timeScale();
+  }
+
   /** 挂载场景音轨;每 tick 将音频驱动到规划器的目标状态(覆盖 play/pause/seek/loop) */
   setAudioTracks(tracks: PlayerAudioTrack[]): void {
     for (const tr of this.audio) tr.el.pause();

@@ -4,6 +4,7 @@
  * F 进入纯净全屏播放;ESC 退出浏览器全屏时同步关掉纯净模式。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { Player } from '../engine/timeline/player';
 import { useStore, useCurrentDoc } from '../store';
 import { ASPECT_PIXELS } from '../types';
@@ -16,13 +17,14 @@ import { PlaybackBar } from './PlaybackBar';
 import { ExportDialog } from './ExportDialog';
 import { AssetsDialog } from './AssetsDialog';
 import { useHotkeys } from './useHotkeys';
-import { exitPresent } from './present';
+import { editorEl, exitPresent } from './present';
 
 export function Editor() {
   const project = useStore((s) => s.project);
   const timelineRev = useStore((s) => s.timelineRev);
   const showInspector = useStore((s) => s.showInspector);
   const pureMode = useStore((s) => s.pureMode);
+  const exportLock = useStore((s) => s.exportLock);
   const speed = useStore((s) => s.speed);
   const loop = useStore((s) => s.loop);
   const doc = useCurrentDoc();
@@ -30,16 +32,50 @@ export function Editor() {
   const [player, setPlayer] = useState<Player | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [assetsOpen, setAssetsOpen] = useState(false);
+  const [liveCapture, setLiveCapture] = useState(false);
+  const [liveNative, setLiveNative] = useState(false);
   const lastTimeRef = useRef(0);
   const onPlayerReady = useCallback((p: Player | null) => setPlayer(p), []);
 
   useHotkeys(player);
 
+  const onLivePrepare = useCallback(() => {
+    flushSync(() => {
+      setLiveCapture(true);
+      setLiveNative(true);
+      useStore.getState().setPureMode(true);
+      useStore.getState().setExportLock(true);
+    });
+    const el = editorEl();
+    if (el && !document.fullscreenElement) {
+      return el.requestFullscreen().then(
+        () => undefined,
+        () => undefined,
+      );
+    }
+  }, []);
+
+  const onLiveContainLayout = useCallback(async () => {
+    flushSync(() => setLiveNative(false));
+    await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+  }, []);
+
+  const onLiveRestore = useCallback(async () => {
+    setLiveCapture(false);
+    setLiveNative(false);
+    useStore.getState().setExportLock(false);
+    useStore.getState().setPureMode(false);
+    if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     const onFs = () => {
-      if (!document.fullscreenElement && useStore.getState().pureMode) {
-        exitPresent();
+      if (document.fullscreenElement) return;
+      if (useStore.getState().exportLock) {
+        window.dispatchEvent(new Event('vk-export-cancel'));
+        return;
       }
+      if (useStore.getState().pureMode) exitPresent();
     };
     document.addEventListener('fullscreenchange', onFs);
     return () => document.removeEventListener('fullscreenchange', onFs);
@@ -58,13 +94,16 @@ export function Editor() {
 
   const px = ASPECT_PIXELS[doc.aspect];
 
+  const stageFill = pureMode || liveCapture;
+  const hideChrome = stageFill;
+
   return (
-    <div className={`editor ${pureMode ? 'pure' : ''}`} data-vk-editor data-aspect={doc.aspect}>
-      {!pureMode && <TopBar project={project} onExportVideo={() => setExportOpen(true)} onOpenAssets={() => setAssetsOpen(true)} />}
+    <div className={`editor ${stageFill ? 'pure' : ''}`} data-vk-editor data-aspect={doc.aspect}>
+      {!hideChrome && <TopBar project={project} onExportVideo={() => setExportOpen(true)} onOpenAssets={() => setAssetsOpen(true)} />}
       <div className="editor-main">
-        {!pureMode && <SceneList doc={doc} player={player} />}
+        {!hideChrome && <SceneList doc={doc} player={player} />}
         <div className="editor-center">
-          <StageViewport w={px.w} h={px.h} fill={pureMode}>
+          <StageViewport w={px.w} h={px.h} fill={stageFill} nativePixels={liveNative}>
             <StageHost
               doc={doc}
               brand={project.brandKit}
@@ -76,10 +115,10 @@ export function Editor() {
             />
           </StageViewport>
         </div>
-        {!pureMode && showInspector && <Inspector doc={doc} />}
+        {!hideChrome && showInspector && <Inspector doc={doc} />}
       </div>
-      <PlaybackBar player={player} doc={doc} overlay={pureMode} />
-      {pureMode && <div className="pure-exit-hint hud">F 退出全屏 · X 显示界面 · Space 播放</div>}
+      {!exportLock && <PlaybackBar player={player} doc={doc} overlay={pureMode} />}
+      {pureMode && !exportLock && <div className="pure-exit-hint hud">F 退出全屏 · X 显示界面 · Space 播放</div>}
       {exportOpen && player && doc && (
         <ExportDialog
           player={player}
@@ -87,6 +126,9 @@ export function Editor() {
           brand={project.brandKit}
           projectName={project.name}
           onClose={() => setExportOpen(false)}
+          onLivePrepare={onLivePrepare}
+          onLiveContainLayout={onLiveContainLayout}
+          onLiveRestore={onLiveRestore}
         />
       )}
       {assetsOpen && <AssetsDialog onClose={() => setAssetsOpen(false)} />}

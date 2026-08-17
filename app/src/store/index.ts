@@ -24,6 +24,8 @@ interface AppState {
   inspectorTab: InspectorTab;
   showInspector: boolean;
   pureMode: boolean;
+  /** 高清导出会话:屏蔽快捷键,避免打断采集 */
+  exportLock: boolean;
   /** 时间线需重建(非 live 字段变更);StageHost 监听此值重建 */
   timelineRev: number;
 
@@ -63,6 +65,7 @@ interface AppActions {
   setInspectorTab(tab: InspectorTab): void;
   toggleInspector(): void;
   setPureMode(v: boolean): void;
+  setExportLock(v: boolean): void;
   setPlaying(v: boolean): void;
   setSpeed(v: number): void;
   setLoop(v: boolean): void;
@@ -113,6 +116,7 @@ export const useStore = create<Store>((set, get) => {
     inspectorTab: 'scene',
     showInspector: true,
     pureMode: false,
+    exportLock: false,
     timelineRev: 0,
 
     isPlaying: false,
@@ -382,6 +386,9 @@ export const useStore = create<Store>((set, get) => {
     },
     setPureMode(v) {
       set({ pureMode: v });
+    },
+    setExportLock(v) {
+      set({ exportLock: v });
     },
     setPlaying(v) {
       set({ isPlaying: v });
